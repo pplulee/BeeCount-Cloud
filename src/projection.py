@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -113,25 +114,16 @@ def _parse_happened_at(raw: Any):
 # --------------------------------------------------------------------------- #
 # Dialect 中立的 upsert                                                         #
 # --------------------------------------------------------------------------- #
-# SQLite / PostgreSQL 都用 INSERT ... ON CONFLICT DO UPDATE。SQLAlchemy 的
-# `dialects.sqlite.insert` 在两种库上语法基本一致;`dialects.postgresql.insert`
-# 同理。我们按 bind 方言走对应 insert,fallback 到先 SELECT 再 UPDATE/INSERT。
-
-def _is_sqlite(bind) -> bool:
-    try:
-        name = bind.dialect.name if hasattr(bind, "dialect") else bind.bind.dialect.name
-    except AttributeError:
-        return True
-    return name == "sqlite"
-
+# ON CONFLICT constructs must match the bound database dialect.
 
 def _upsert(db: Session, model, pk_fields: tuple[str, ...], values: dict) -> None:
     """通用 upsert:主键撞了就 UPDATE 其他所有列。"""
     bind = db.get_bind()
-    if _is_sqlite(bind) or getattr(bind.dialect, "name", "") == "postgresql":
-        # SQLite / PG 都支持 ON CONFLICT。这里用 sqlite 方言 insert 生成语句,
-        # 实际执行时由 SQLAlchemy 翻译;PG 下走一样的语义。
-        stmt = sqlite_insert(model).values(**values)
+    if bind.dialect.name in ("sqlite", "postgresql"):
+        insert_ctor = (
+            postgresql_insert if bind.dialect.name == "postgresql" else sqlite_insert
+        )
+        stmt = insert_ctor(model).values(**values)
         update_cols = {k: stmt.excluded[k] for k in values.keys() if k not in pk_fields}
         if update_cols:
             stmt = stmt.on_conflict_do_update(

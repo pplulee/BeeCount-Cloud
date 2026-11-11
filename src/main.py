@@ -417,7 +417,7 @@ async def _log_sync_changes_size() -> None:  # noqa: B008
     try:
         with SessionLocal() as db:
             row = db.execute(text(
-                "SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(payload_json)), 0) AS bytes "
+                "SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(CAST(payload_json AS TEXT))), 0) AS bytes "
                 "FROM sync_changes"
             )).first()
             if row is None:
